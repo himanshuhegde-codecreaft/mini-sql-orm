@@ -22,7 +22,6 @@ export class User extends BaseEntity implements IUser {
     @Column()
     email: string;
 
-
     constructor(user: IUser) {
         super(user);
         this.name = user.name;

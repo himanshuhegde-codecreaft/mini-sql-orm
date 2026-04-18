@@ -11,17 +11,19 @@ export interface IBaseEntity {
   updatedBy: number;
 }
 
+type ExcludedProps = "updatedAt" | "createdAt" | "save" | "id";
+
 export abstract class BaseEntity implements IBaseEntity {
   @Column()
   id?: number | undefined;
 
-  @Column('created_at')
+  @Column("created_at")
   createdAt: Date;
-  @Column('created_by')
+  @Column("created_by")
   createdBy: number;
-  @Column('updated_at')
+  @Column("updated_at")
   updatedAt: Date;
-  @Column('updated_by')
+  @Column("updated_by")
   updatedBy: number;
 
   constructor(entity: IBaseEntity) {
@@ -33,74 +35,93 @@ export abstract class BaseEntity implements IBaseEntity {
   }
 
   async save(): Promise<void> {
-    const ctor = this.constructor;
-    const proto = Object.getPrototypeOf(this) as object;
-    const keys = Object.keys(this);
-
-    const columnsMetadata = keys
-      .map((k) => getColumnSqlName(proto, k))
-      .filter((metadata) =>{
-        return !(metadata.propertyName ==='id') && metadata.dbColumnName});
-    const values = columnsMetadata.map(
-      (col) => (this as any)[col.propertyName],
-    )
-    const columns = columnsMetadata.map((col) => col.dbColumnName);
-    const query = DB.driver.getInsertQuery(
-      Reflect.getMetadata(TABLE_METADATA_KEY, ctor),
-      columns,
-    );
-    await DB.driver.execute(query, values);
-  }
-    reverseKeyMapp<T extends BaseEntity,>(this: T,): Record<string, string> {
-    const keys = Object.keys(this);
-    const reverseKeyMapp: Record<string, string> = {};
-    for (const key of keys) {
-      const { dbColumnName } = getColumnSqlName(Object.getPrototypeOf(this), key);
-      if (dbColumnName) {
-        reverseKeyMapp[dbColumnName] = key;
-      }
+    try {
+      const ctor = this.constructor;
+      const proto = Object.getPrototypeOf(this) as object;
+      const keys = Object.keys(this);
+      const columnsMetadata = keys
+        .map((k) => getColumnSqlName(proto, k))
+        .filter((metadata) => {
+          return !(metadata.propertyName === "id") && metadata.dbColumnName;
+        });
+      const values = columnsMetadata.map(
+        (col) => (this as any)[col.propertyName],
+      );
+      const columns = columnsMetadata.map((col) => col.dbColumnName);
+      const query = DB.driver.getInsertQuery(
+        Reflect.getMetadata(TABLE_METADATA_KEY, ctor),
+        columns,
+      );
+      await DB.driver.execute(query, values);
+    } catch (err) {
+      console.error("Error saving entity:", err);
+      throw err;
     }
-    return reverseKeyMapp;
+  }
+  private reverseKeyMapp<T extends BaseEntity>(
+    this: T,
+  ): Record<string, string> {
+    try {
+      const keys = Object.keys(this);
+      const reverseKeyMapp: Record<string, string> = {};
+      for (const key of keys) {
+        const { dbColumnName } = getColumnSqlName(
+          Object.getPrototypeOf(this),
+          key,
+        );
+        if (dbColumnName) {
+          reverseKeyMapp[dbColumnName] = key;
+        }
+      }
+      return reverseKeyMapp;
+    } catch (err) {
+      console.error("Error creating reverse key mapping:", err);
+      throw err;
+    }
   }
   static async findAll<T extends BaseEntity, I extends IBaseEntity>(
     this: new (entity: I) => T,
-    conditions?: Record<string, unknown>,
+    conditions?: Partial<I>,
     limit?: number,
     offset?: number,
   ): Promise<T[]> {
-    let condition: Record<string, unknown> | undefined = {};
-    if (conditions !== undefined) {
-      for (const key of Object.keys(conditions)) {
-        const { dbColumnName } = getColumnSqlName(this.prototype, key);
-        if (dbColumnName === undefined) {
-          continue;
+    try {
+      let newConditions: Record<string, unknown> = {};
+      if (conditions !== undefined) {
+        for (const key of Object.keys(conditions)) {
+          const { dbColumnName } = getColumnSqlName(this.prototype, key);
+          if (dbColumnName === undefined) {
+            continue;
+          }
+          newConditions[dbColumnName] = conditions[key as keyof typeof conditions];
         }
-        condition[dbColumnName] = conditions[key];
-    }
-    }
-    const reverseKeyMapp = new this({} as I).reverseKeyMapp();
-   
+      }
+      const reverseKeyMapp = new this({} as I).reverseKeyMapp();
 
-    const query = DB.driver.getSelectQuery(
-      Reflect.getMetadata(TABLE_METADATA_KEY, this),
-      ["*"],
-      condition,
-      limit,
-      offset,
-    );
-    const result = (await DB.driver.execute(query,Object.values(condition)));
-    return result.rows.map((row: any) => {
+      const query = DB.driver.getSelectQuery(
+        Reflect.getMetadata(TABLE_METADATA_KEY, this),
+        ["*"],
+        newConditions,
+        limit,
+        offset,
+      );
+      const result = await DB.driver.execute(query, Object.values(newConditions));
+      return result.rows.map((row: any) => {
         const entityObj: Record<string, unknown> = {};
         for (const key of Object.keys(row)) {
-            const propertyName = reverseKeyMapp[key] ?? key;
-            entityObj[propertyName] = row[key];
+          const propertyName = reverseKeyMapp[key] ?? key;
+          entityObj[propertyName] = row[key];
         }
         return new this(entityObj as I);
-    });
+      });
+    } catch (err) {
+      console.error("Error finding entities:", err);
+      throw err;
+    }
   }
   static async findOne<T extends BaseEntity, I extends IBaseEntity>(
     this: new (entity: I) => T,
-    conditions: Record<string, unknown>,
+    conditions: Partial<I>,
   ): Promise<T | null> {
     const results = await (this as any).findAll(conditions);
     return results.length > 0 ? results[0] : null;
@@ -113,31 +134,49 @@ export abstract class BaseEntity implements IBaseEntity {
   }
   static async deleteAll<T extends BaseEntity, I extends IBaseEntity>(
     this: new (entity: I) => T,
-    conditions: Record<string, unknown>,
+    conditions: Partial<I>,
   ): Promise<number> {
-    let condition: Record<string, unknown> | undefined = {};
-    if (conditions !== undefined) {
-      for (const key of Object.keys(conditions)) {
-        const { dbColumnName } = getColumnSqlName(this.prototype, key);
-        if (dbColumnName === undefined) {
-          continue;
+    try {
+      let newCondition: Record<string, unknown> | undefined = {};
+      if (conditions !== undefined) {
+        for (const key of Object.keys(conditions)) {
+          const { dbColumnName } = getColumnSqlName(this.prototype, key);
+          if (dbColumnName === undefined) {
+            newCondition[key] = conditions[key as keyof typeof conditions];
+            continue;
+          }
+          newCondition[dbColumnName] = conditions[key as keyof typeof conditions];
         }
-        condition[dbColumnName] = conditions[key];
       }
+      const query = DB.driver.getDeleteQuery(
+        Reflect.getMetadata(TABLE_METADATA_KEY, this),
+        newCondition,
+      );
+      const result = await DB.driver.execute(query, Object.values(newCondition));
+      return result.rowCount;
+    } catch (err) {
+      console.error("Error deleting entities:", err);
+      throw err;
     }
-    const query = DB.driver.getDeleteQuery(
-      Reflect.getMetadata(TABLE_METADATA_KEY, this),
-      condition
-    );
-    const result = await DB.driver.execute(query,Object.values(conditions));
-    return result.rowCount ;
   }
   static async deleteOne<T extends BaseEntity, I extends IBaseEntity>(
     this: new (entity: I) => T,
-    conditions: Record<string, unknown>,
+    conditions: Partial<I>,
   ): Promise<boolean> {
-    const condition = await (this as any).findOne(conditions);
-    const affectedRows = await (this as any).deleteAll(condition);
+    const selectQuery = DB.driver.getSelectQuery(
+      Reflect.getMetadata(TABLE_METADATA_KEY, this),
+      ["id"],
+      conditions,
+      1,
+    );
+    const result = await DB.driver.execute(
+      selectQuery,
+      Object.values(conditions),
+    );
+    if (result.rows.length === 0) {
+      return false;
+    }
+    const affectedRows = await (this as any).deleteAll(result.rows[0]);
     return affectedRows > 0;
   }
   static async deleteById<T extends BaseEntity, I extends IBaseEntity>(
@@ -148,38 +187,75 @@ export abstract class BaseEntity implements IBaseEntity {
   }
   static async count<T extends BaseEntity, I extends IBaseEntity>(
     this: new (entity: I) => T,
-    conditions?: Record<string, unknown>,
+    conditions?: Partial<I>,
   ): Promise<number> {
-    const query = DB.driver.getCountQuery(
-      Reflect.getMetadata(TABLE_METADATA_KEY, this),
-      conditions,
-    );
-    const result = await DB.driver.execute(query);
-    return result[0].count;
+    try {
+      const query = DB.driver.getCountQuery(
+        Reflect.getMetadata(TABLE_METADATA_KEY, this),
+        conditions,
+      );
+      
+      const result = await DB.driver.execute(
+        query,
+        Object.values(conditions ?? {}),
+      );
+      return result.rows[0].count;
+    } catch (err) {
+      console.error("Error counting entities:", err);
+      throw err;
+    }
   }
   static async updateAll<T extends BaseEntity, I extends IBaseEntity>(
     this: new (entity: I) => T,
-    updates: Record<string, unknown>,
-    conditions: Record<string, unknown>,
+    updates: Omit<Partial<I>, ExcludedProps>,
+    conditions: Partial<I>,
   ): Promise<number> {
-    const query = DB.driver.getUpdateQuery(
-      Reflect.getMetadata(TABLE_METADATA_KEY, this),
-      Object.keys(updates),
-      conditions,
-    );
-    console.log("Update Query:", query);
-    const params = [...Object.values(updates), ...Object.values(conditions)];
-    console.log(params)
+    try {
+      const newUpdates: Record<string, any> = {
+        updated_at: new Date(),
+      };
+      for (const key of Object.keys(updates)) {
+        const { dbColumnName } = getColumnSqlName(this.prototype, key);
 
-    const result = await DB.driver.execute(query, params);
-    console.log(result)
-    
-    return result.rowCount;
+        if (dbColumnName !== undefined) {
+          newUpdates[dbColumnName] = updates[key as keyof typeof updates];
+          continue;
+        }
+        newUpdates[key] = updates[key as keyof typeof updates];
+      }
+
+      const newConditions: Record<string, unknown> = {};
+      for (const key of Object.keys(conditions)) {
+        const { dbColumnName } = getColumnSqlName(this.prototype, key);
+        if (dbColumnName !== undefined) {
+          newConditions[dbColumnName] = conditions[key as keyof typeof conditions];
+          continue;
+        }
+        newConditions[key] = conditions[key as keyof typeof conditions];
+      }
+      const query = DB.driver.getUpdateQuery(
+        Reflect.getMetadata(TABLE_METADATA_KEY, this),
+        Object.keys(newUpdates),
+        newConditions,
+      );
+      const params = [
+        ...Object.values(newUpdates),
+        ...Object.values(newConditions),
+      ];
+
+      const result = await DB.driver.execute(query, params);
+
+      return result.rowCount;
+    } catch (err) {
+      console.error("Error updating entities:", err);
+      throw err;
+    }
   }
+
   static async updateById<T extends BaseEntity, I extends IBaseEntity>(
     this: new (entity: I) => T,
     id: number,
-    updates: Record<string, unknown>,
+    updates: Omit<Partial<I>, ExcludedProps>,
   ): Promise<boolean> {
     const affectedRows = await (this as any).updateAll(updates, { id });
     return affectedRows > 0;

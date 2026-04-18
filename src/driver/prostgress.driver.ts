@@ -15,7 +15,6 @@ export class PostgreSqlDriver implements IDatabaseDriver {
     }
     this.client = new Client(this.connectionConfig);
     await this.client.connect();
-
   }
   async disconnect(): Promise<void> {
     if (!this.client) {
@@ -49,15 +48,19 @@ export class PostgreSqlDriver implements IDatabaseDriver {
     index: number,
   ): string {
     const conditionPlaceHolder = conditions
-      ? Object.keys(conditions).map((condition) => {
-          return `${condition} = ${this.getNumberedPlaceholder(index++)}`;
-        }).join(' AND ')
+      ? Object.keys(conditions)
+          .map((condition) => {
+            return `${condition} = ${this.getNumberedPlaceholder(index++)}`;
+          })
+          .join(" AND ")
       : "";
-    return conditions ? ` WHERE ${conditionPlaceHolder}` : "";
+    return conditions && Object.keys(conditions).length > 0
+      ? ` WHERE ${conditionPlaceHolder}`
+      : "";
   }
 
   getLimitStatement(limit?: number): string {
-    return limit ? `LIMIT ${limit}` : "";
+    return limit ? ` LIMIT ${limit}` : "";
   }
 
   getOffsetStatement(offset?: number): string {
@@ -70,9 +73,9 @@ export class PostgreSqlDriver implements IDatabaseDriver {
     conditions: Record<string, unknown>,
   ): string {
     let index = 1;
-    const columnPlaceholders = columns.map(
-      (column) => `${column} = ${this.getNumberedPlaceholder(index++)}`,
-    ).join(", ");
+    const columnPlaceholders = columns
+      .map((column) => `${column} = ${this.getNumberedPlaceholder(index++)}`)
+      .join(", ");
     return `UPDATE ${tableName} SET ${columnPlaceholders}${this.getWhereStatement(conditions, index)}`;
   }
   getDeleteQuery(
@@ -89,8 +92,7 @@ export class PostgreSqlDriver implements IDatabaseDriver {
     offset?: number,
   ): string {
     return `SELECT ${columns.join(", ")}
-FROM ${tableName}${this.getWhereStatement(conditions, 1)}
-ORDER BY id${this.getLimitStatement(limit)}${this.getOffsetStatement(offset)}`;
+FROM ${tableName}${this.getWhereStatement(conditions, 1)}${this.getLimitStatement(limit)}${this.getOffsetStatement(offset)}`;
   }
 
   getCountQuery(
